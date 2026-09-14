@@ -1,0 +1,416 @@
+// Черновик схемы БД для версии 1.
+// Модели версий 2–3 (Payment, Quiz*, PlacementResult, Project*) добавляются отдельными миграциями.
+// Правила доступа и прогресса — docs/ARCHITECTURE-BACKEND.md, раздел 4.
+
+// Prisma 7: строка подключения задаётся в prisma.config.ts, а PrismaClient создаётся
+// с драйвер-адаптером @prisma/adapter-pg (см. .claude/rules/prisma.md).
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ───────────────────────── Перечисления ─────────────────────────
+
+enum Role {
+  STUDENT
+  REVIEWER
+  ADMIN
+}
+
+enum Locale {
+  ru
+  ky
+  en
+}
+
+enum Level {
+  JUNIOR
+  MIDDLE
+  SENIOR
+}
+
+enum CourseAccess {
+  FREE
+  PAID
+}
+
+enum TranslationStatus {
+  DRAFT
+  REVIEW
+  PUBLISHED
+}
+
+enum Runtime {
+  JS
+}
+
+enum TokenType {
+  EMAIL_VERIFY
+  PASSWORD_RESET
+}
+
+enum ProgressStatus {
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum GrantSource {
+  PURCHASE
+  MANUAL
+  PROMO
+}
+
+enum ReportStatus {
+  OPEN
+  RESOLVED
+  DISMISSED
+}
+
+// ───────────────────────── Пользователи ─────────────────────────
+
+model User {
+  id              String    @id @default(uuid()) @db.Uuid
+  email           String    @unique // всегда в нижнем регистре
+  passwordHash    String? // null, если вход только через Google
+  name            String
+  avatarUrl       String?
+  locale          Locale    @default(ru)
+  role            Role      @default(STUDENT)
+  emailVerifiedAt DateTime?
+  blockedAt       DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  oauthAccounts  OAuthAccount[]
+  sessions       Session[]
+  tokens         UserToken[]
+  lessonProgress LessonProgress[]
+  submissions    Submission[]
+  hintUsage      ExerciseHintUsage[]
+  accessGrants   AccessGrant[]       @relation("GrantUser")
+  grantsIssued   AccessGrant[]       @relation("GrantIssuer")
+  problemReports ProblemReport[]     @relation("ReportAuthor")
+  reportsHandled ProblemReport[]     @relation("ReportResolver")
+}
+
+model OAuthAccount {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @db.Uuid
+  provider       String // "google"
+  providerUserId String
+  createdAt      DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerUserId])
+  @@index([userId])
+}
+
+model Session {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @db.Uuid
+  tokenHash  String   @unique // SHA-256 от токена из куки
+  userAgent  String?
+  expiresAt  DateTime
+  lastUsedAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model UserToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  type      TokenType
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type])
+}
+
+// ───────────────────────── Контент ─────────────────────────
+
+model Track {
+  id          String   @id @default(uuid()) @db.Uuid
+  slug        String   @unique
+  icon        String?
+  position    Int      @default(0)
+  isPublished Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  translations TrackTranslation[]
+  courses      TrackCourse[]
+}
+
+model TrackTranslation {
+  id          String            @id @default(uuid()) @db.Uuid
+  trackId     String            @db.Uuid
+  locale      Locale
+  title       String
+  description String            @db.Text // markdown
+  status      TranslationStatus @default(DRAFT)
+  contentHash String? // для импорта: пропуск неизменённого
+  updatedAt   DateTime          @updatedAt
+
+  track Track @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@unique([trackId, locale])
+}
+
+model Course {
+  id          String       @id @default(uuid()) @db.Uuid
+  slug        String       @unique
+  level       Level
+  access      CourseAccess @default(FREE)
+  price       Int          @default(0) // целые сомы; для FREE всегда 0
+  currency    String       @default("KGS")
+  coverUrl    String?
+  isPublished Boolean      @default(false)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  translations CourseTranslation[]
+  tracks       TrackCourse[]
+  modules      Module[]
+  lessons      Lesson[]
+  accessGrants AccessGrant[]
+}
+
+model CourseTranslation {
+  id               String            @id @default(uuid()) @db.Uuid
+  courseId         String            @db.Uuid
+  locale           Locale
+  title            String
+  shortDescription String
+  description      String            @db.Text // markdown
+  status           TranslationStatus @default(DRAFT)
+  contentHash      String?
+  updatedAt        DateTime          @updatedAt
+
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([courseId, locale])
+}
+
+// Один курс может входить в несколько направлений.
+model TrackCourse {
+  trackId  String @db.Uuid
+  courseId String @db.Uuid
+  position Int    @default(0)
+
+  track  Track  @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@id([trackId, courseId])
+  @@index([courseId])
+}
+
+model Module {
+  id        String   @id @default(uuid()) @db.Uuid
+  courseId  String   @db.Uuid
+  slug      String
+  position  Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  course       Course              @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  translations ModuleTranslation[]
+  lessons      Lesson[]
+
+  @@unique([courseId, slug])
+  @@index([courseId, position])
+}
+
+model ModuleTranslation {
+  id          String            @id @default(uuid()) @db.Uuid
+  moduleId    String            @db.Uuid
+  locale      Locale
+  title       String
+  status      TranslationStatus @default(DRAFT)
+  contentHash String?
+  updatedAt   DateTime          @updatedAt
+
+  module Module @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  @@unique([moduleId, locale])
+}
+
+model Lesson {
+  id        String   @id @default(uuid()) @db.Uuid
+  moduleId  String   @db.Uuid
+  courseId  String   @db.Uuid // денормализация: slug уникален в пределах курса (URL /courses/[course]/[lesson])
+  slug      String
+  position  Int // позиция внутри модуля
+  isPreview Boolean  @default(false)
+  minutes   Int?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  module         Module              @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  course         Course              @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  translations   LessonTranslation[]
+  exercises      Exercise[]
+  progress       LessonProgress[]
+  problemReports ProblemReport[]
+
+  @@unique([courseId, slug])
+  @@index([moduleId, position])
+}
+
+model LessonTranslation {
+  id          String            @id @default(uuid()) @db.Uuid
+  lessonId    String            @db.Uuid
+  locale      Locale
+  title       String
+  body        String            @db.Text // markdown
+  status      TranslationStatus @default(DRAFT)
+  contentHash String?
+  updatedAt   DateTime          @updatedAt
+
+  lesson Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@unique([lessonId, locale])
+}
+
+model Exercise {
+  id           String   @id @default(uuid()) @db.Uuid
+  lessonId     String   @db.Uuid
+  slug         String
+  position     Int
+  runtime      Runtime  @default(JS)
+  starterCode  String   @db.Text // общий для всех языков
+  solution     String   @db.Text // не отдаётся клиенту, кроме эндпоинта эталона
+  tests        String   @db.Text // отдаётся клиенту: тесты выполняются в браузере
+  isInterview  Boolean  @default(false) // задел под режим собеседования (v3)
+  timeLimitSec Int? // задел под режим собеседования (v3)
+  contentHash  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  lesson         Lesson                @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  translations   ExerciseTranslation[]
+  submissions    Submission[]
+  hintUsage      ExerciseHintUsage[]
+  problemReports ProblemReport[]
+
+  @@unique([lessonId, slug])
+  @@index([lessonId, position])
+}
+
+model ExerciseTranslation {
+  id          String            @id @default(uuid()) @db.Uuid
+  exerciseId  String            @db.Uuid
+  locale      Locale
+  title       String
+  statement   String            @db.Text // markdown
+  hints       String[] // по порядку: намёк → подход → почти решение
+  status      TranslationStatus @default(DRAFT)
+  contentHash String?
+  updatedAt   DateTime          @updatedAt
+
+  exercise Exercise @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+
+  @@unique([exerciseId, locale])
+}
+
+// ───────────────────────── Прогресс ─────────────────────────
+
+model LessonProgress {
+  userId      String         @db.Uuid
+  lessonId    String         @db.Uuid
+  status      ProgressStatus @default(IN_PROGRESS)
+  completedAt DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lesson Lesson @relation(fields: [lessonId], references: [id], onDelete: Restrict)
+
+  @@id([userId, lessonId])
+  @@index([lessonId])
+}
+
+model Submission {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @db.Uuid
+  exerciseId  String   @db.Uuid
+  code        String   @db.Text // до 50 КБ, проверяется в DTO
+  passed      Boolean
+  testsPassed Int
+  testsTotal  Int
+  createdAt   DateTime @default(now())
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  exercise Exercise @relation(fields: [exerciseId], references: [id], onDelete: Restrict)
+
+  @@index([userId, exerciseId, passed])
+  @@index([exerciseId, createdAt])
+}
+
+// Сколько подсказок открыл пользователь (нужно для правила выдачи эталона).
+model ExerciseHintUsage {
+  userId     String   @db.Uuid
+  exerciseId String   @db.Uuid
+  maxLevel   Int // 1..количество подсказок
+  updatedAt  DateTime @updatedAt
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  exercise Exercise @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+
+  @@id([userId, exerciseId])
+}
+
+// ───────────────────────── Доступ ─────────────────────────
+
+model AccessGrant {
+  id          String      @id @default(uuid()) @db.Uuid
+  userId      String      @db.Uuid
+  courseId    String      @db.Uuid
+  source      GrantSource
+  grantedById String?     @db.Uuid // администратор при ручной выдаче
+  note        String?
+  createdAt   DateTime    @default(now())
+  // v2: paymentId для source = PURCHASE
+
+  user      User   @relation("GrantUser", fields: [userId], references: [id], onDelete: Cascade)
+  course    Course @relation(fields: [courseId], references: [id], onDelete: Restrict)
+  grantedBy User?  @relation("GrantIssuer", fields: [grantedById], references: [id], onDelete: SetNull)
+
+  @@unique([userId, courseId]) // доступ бессрочный, одна запись на курс
+  @@index([courseId])
+}
+
+// ───────────────────────── Обратная связь ─────────────────────────
+
+model ProblemReport {
+  id           String       @id @default(uuid()) @db.Uuid
+  userId       String       @db.Uuid
+  lessonId     String       @db.Uuid
+  exerciseId   String?      @db.Uuid
+  locale       Locale // на каком языке читал ученик
+  message      String       @db.Text
+  status       ReportStatus @default(OPEN)
+  resolvedById String?      @db.Uuid
+  resolvedAt   DateTime?
+  createdAt    DateTime     @default(now())
+
+  user       User      @relation("ReportAuthor", fields: [userId], references: [id], onDelete: Cascade)
+  lesson     Lesson    @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  exercise   Exercise? @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+  resolvedBy User?     @relation("ReportResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([lessonId])
+}
