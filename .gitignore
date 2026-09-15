@@ -1,0 +1,27 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+coverage/
+
+# env
+.env
+.env.*.local
+
+# prisma generated client
+src/generated/
+
+# logs
+*.log
+
+# editor
+.vscode/
+.idea/
+
+# локальные настройки Claude Code (не проектные)
+.claude/settings.local.json
+
+# os
+.DS_Store
+Thumbs.db
