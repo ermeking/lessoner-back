@@ -11,7 +11,9 @@ export class AppException extends HttpException {
     public readonly code: ErrorCode,
     httpStatus: HttpStatus,
     public readonly details?: AppExceptionDetail[],
+    // Для логов и отладки (docs/DOMAIN-SHARED.md, разд. 6); по умолчанию — сам код.
+    message: string = code,
   ) {
-    super({ code, message: code, details }, httpStatus);
+    super({ code, message, details }, httpStatus);
   }
 }
