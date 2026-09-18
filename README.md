@@ -10,7 +10,8 @@
 pnpm install
 cp .env.example .env             # заполнить при необходимости
 docker compose up -d             # postgres (базы edu_api и edu_test) + mailpit (http://localhost:8025)
-pnpm prisma generate
+pnpm prisma migrate dev          # применить миграции к edu_api
+pnpm prisma db seed              # администратор из env + демо-курсы (frontend, demo-js, demo-paid)
 pnpm dev                         # API: http://localhost:3000/api/v1, Swagger UI: /api/docs, JSON: /api/docs-json
 ```
 

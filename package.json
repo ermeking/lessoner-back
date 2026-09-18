@@ -12,13 +12,14 @@
     "dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
-    "lint": "eslint \"{src,test}/**/*.ts\" --fix",
+    "lint": "eslint \"{src,test,prisma}/**/*.ts\" \"*.ts\" --fix",
     "typecheck": "tsc --noEmit",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
-    "test:e2e": "cross-env NODE_OPTIONS=--experimental-vm-modules NODE_ENV=test DATABASE_URL=postgresql://postgres:postgres@localhost:5433/edu_test?schema=public jest --config ./test/jest-e2e.json --runInBand"
+    "test:e2e:migrate": "cross-env DATABASE_URL=postgresql://postgres:postgres@localhost:5433/edu_test?schema=public pnpm prisma migrate deploy",
+    "test:e2e": "pnpm test:e2e:migrate && cross-env NODE_OPTIONS=--experimental-vm-modules NODE_ENV=test DATABASE_URL=postgresql://postgres:postgres@localhost:5433/edu_test?schema=public jest --config ./test/jest-e2e.json --runInBand"
   },
   "dependencies": {
     "@nestjs/common": "^11.2.5",
@@ -28,6 +29,7 @@
     "@nestjs/swagger": "^11.4.7",
     "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "^7.10.0",
+    "argon2": "^0.45.1",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
     "nestjs-pino": "^5.1.0",
@@ -49,6 +51,7 @@
     "@types/pg": "^8.23.1",
     "@types/supertest": "^7.0.0",
     "cross-env": "^10.1.0",
+    "dotenv": "^18.0.0",
     "eslint": "^9.18.0",
     "eslint-config-prettier": "^10.0.1",
     "eslint-plugin-prettier": "^5.2.2",
@@ -63,6 +66,7 @@
     "ts-loader": "^9.5.2",
     "ts-node": "^10.9.2",
     "tsconfig-paths": "^4.2.0",
+    "tsx": "^4.23.13",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.20.0"
   },
